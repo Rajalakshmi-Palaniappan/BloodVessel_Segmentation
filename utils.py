@@ -1,5 +1,6 @@
 import os
 import networkx as nx
+import numpy as np
 
 
 def read_swc_file(in_file):
@@ -34,6 +35,7 @@ def create_graph_from_swc(swc):
             x=point[1],
             y=point[2],
             z=point[3],
+            pos=np.array([point[1], point[2], point[3]]),
             radius=point[4],
             parent_id=parent_id
         )
