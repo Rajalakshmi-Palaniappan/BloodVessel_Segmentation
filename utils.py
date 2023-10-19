@@ -6,7 +6,10 @@ import numpy as np
 def read_swc_file(in_file):
     skeleton = []
     with open(os.path.join(in_file), "r") as f:
+        #cnt = 0
         for line in f:
+            #if cnt > 2000:
+            #    break
             if line.startswith("#"):
                 continue
             fields = line.strip().split()
@@ -20,6 +23,7 @@ def read_swc_file(in_file):
             radius = float(fields[5])
             parent = int(fields[6])
             skeleton.append((index, x, y, z, radius, parent))
+            #cnt += 1
     return skeleton
 
 
@@ -41,6 +45,17 @@ def create_graph_from_swc(swc):
         )
         if parent_id != -1:
             graph.add_edge(node_id, parent_id)
+    return graph
+
+
+def create_graph_from_edge_list(edges):
+    # create graph
+    graph = nx.DiGraph()
+    # create graph node for each swc line
+    for u, v in edges:
+        graph.add_node(u)
+        graph.add_node(v)
+        graph.add_edge(u, v)
     return graph
 
 

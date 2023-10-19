@@ -7,6 +7,7 @@ import gurobipy as gp
 from gurobipy import GRB
 from scipy.stats import norm, vonmises
 import matplotlib.pyplot as plt
+import networkx as nx
 import utils
 
 
@@ -58,8 +59,117 @@ def get_pairwise_cost():
     pass
 
 
-def add_constraints():
-    pass
+def add_constraints(m, graph, vars, root):
+    # add no-cycle constraint
+    # reimplemented from Tueretken 2016 formulas (8-15),
+    # https://vcg.seas.harvard.edu/publications/reconstructing-curvilinear-networks-using-path-classifiers-and-integer-programming/paper
+
+    auxiliary_vars = {}
+    # (8) for all nodes j and l without root: sum_j y^l_rj <= 1
+    print("add c8")
+    for n_l in graph.nodes():
+        if n_l == root:
+            continue
+        tmpexp = None
+        for n_j in graph.nodes():
+            if n_j == root or n_j == n_l:
+                continue
+            cauxvar = "y_%i_%i_%i" % (n_l, root, n_j)
+            auxiliary_vars[cauxvar] = m.addVar(
+                vtype=GRB.CONTINUOUS, name=cauxvar)
+            if tmpexp is None:
+                tmpexp = gp.LinExpr(auxiliary_vars[cauxvar])
+            else:
+                tmpexp.add(auxiliary_vars[cauxvar])
+        m.addConstr(tmpexp <= 1, "c8_%i" % n_l)
+
+    # (9) for all nodes l without root and all nodes j without l:
+    # sum_j y^l_jl <= 1
+    print("add c9")
+    for n_l in graph.nodes():
+        if n_l == root:
+            continue
+        tmpexp = None
+        for n_j in graph.nodes():
+            if n_j == n_l:
+                continue
+            cauxvar = "y_%i_%i_%i" % (n_l, n_j, n_l)
+            auxiliary_vars[cauxvar] = m.addVar(
+                vtype=GRB.CONTINUOUS, name=cauxvar)
+            if tmpexp is None:
+                tmpexp = gp.LinExpr(auxiliary_vars[cauxvar])
+            else:
+                tmpexp.add(auxiliary_vars[cauxvar])
+        m.addConstr(tmpexp <= 1, "c9_%i" % n_l)
+
+    # (10) for all l
+    print("add c10")
+    for n_l in graph.nodes():
+        if n_l == root:
+            continue
+        for n_i in graph.nodes():
+            if n_i == root or n_i == n_l:
+                continue
+            # left sum
+            tmpexpleft = None
+            for n_j in graph.nodes():
+                if n_j == root or n_j == n_i:
+                    continue
+                cauxvar = "y_%i_%i_%i" % (n_l, n_i, n_j)
+                if cauxvar not in auxiliary_vars:
+                    auxiliary_vars[cauxvar] = m.addVar(
+                        vtype=GRB.CONTINUOUS, name=cauxvar)
+                if tmpexpleft is None:
+                    tmpexpleft = gp.LinExpr(auxiliary_vars[cauxvar])
+                else:
+                    tmpexpleft.add(auxiliary_vars[cauxvar])
+            # right sum
+            tmpexpright = None
+            for n_j in graph.nodes():
+                if n_j == n_i or n_j == n_l:
+                    continue
+                cauxvar = "y_%i_%i_%i" % (n_l, n_j, n_i)
+                if cauxvar not in auxiliary_vars:
+                    auxiliary_vars[cauxvar] = m.addVar(
+                        vtype=GRB.CONTINUOUS, name=cauxvar)
+                if tmpexpright is None:
+                    tmpexpright = gp.LinExpr(auxiliary_vars[cauxvar])
+                else:
+                    tmpexpright.add(auxiliary_vars[cauxvar])
+            # bring them together
+            m.addConstr(tmpexpleft - tmpexpright == 0,
+            "c10_%i_%i" % (n_l, n_i))
+
+    # (11) for all edges and all nodes except r,i,j: y^l_ij <= t_ij
+    print("add c11")
+    for i, j in graph.edges():
+        for n_l in graph.nodes():
+            if n_l == root or n_l == i or n_l == j:
+                continue
+            cauxvar = "y_%i_%i_%i" % (n_l, i, j)
+            cedgename = "e_%i_%i" % (i, j)
+            m.addConstr(auxiliary_vars[cauxvar] <= vars[cedgename],
+                        "c11_%i_%i_%i" % (i, j, n_l))
+
+    # (12) for all edges: y^l_il == t_il
+    print("add c12")
+    for i, l in graph.edges():
+        cauxvar = "y_%i_%i_%i" % (l, i, l)
+        cedgename = "e_%i_%i" % (i, l)
+        m.addConstr(auxiliary_vars[cauxvar] == vars[cedgename],
+                    "c12_%i_%i" % (i, l))
+
+    # (13) for all edges e_ij and all nodes except root and i: y^l_ij >= 0
+    print("add c13")
+    for i, j in graph.edges():
+        for n_l in graph.nodes():
+            if n_l == root or n_l == i:
+                continue
+            cauxvar = "y_%i_%i_%i" % (n_l, i, j)
+            m.addConstr(auxiliary_vars[cauxvar] >= 0,
+                        "c13_%i_%i_%i" % (l, i, j))
+
+    return m, auxiliary_vars
 
 
 def create_model(graph, roots=None):
@@ -74,15 +184,20 @@ def create_model(graph, roots=None):
         if graph.nodes[n]["radius"] >= cradius:
             root = n
             cradius = graph.nodes[n]["radius"]
-    print(root, cradius)
+    print("root: ", root, cradius)
+
+    # check for loops
+    try:
+        print("loop found", list(nx.find_cycle(graph, orientation="ignore")))
+    except nx.exception.NetworkXNoCycle as e:
+        print("no loops found.")
 
     objective = None
     vars = {}
     # iterate over all edges for unary term
+    print("add unary terms for edges")
     for u, v in graph.edges():
-        print(u, v)
         cedgename = "e_%i_%i" % (u, v)
-        print(cedgename)
         # define gurobi variables, add all edges
         vars[cedgename] = m.addVar(vtype=GRB.BINARY, name=cedgename)
         # compute edge cost and add to graph
@@ -100,6 +215,7 @@ def create_model(graph, roots=None):
             objective.add(width_cost * vars[cedgename])
 
     # iterate over all edges for pairwise term
+    print("add pairwise terms for edge pairs")
     for u, v in graph.edges():
         # check if edge has successor edges
         successor_nodes = graph.successors(v)
@@ -122,13 +238,27 @@ def create_model(graph, roots=None):
             objective.add(edge_dir_cost * vars[cedgename] * vars[nedgename])
 
     # add constraints
+    m, aux_vars = add_constraints(m, graph, vars, root)
 
     # add objective
     m.setObjective(objective, GRB.MAXIMIZE)
 
     m.optimize()
+    cnt = 0
+    selected_edges = []
     for v in m.getVars():
-        print('%s %g' % (v.VarName, v.X))
+        if v.X == 1 and v.VarName.startswith("e_"):
+            print('%s %g' % (v.VarName, v.X))
+            selected_edges.append(np.array(v.VarName.split("_")[1:], dtype=int))
+            cnt += 1
+    print(graph.number_of_edges(), cnt)
+
+    # create graph and check for loops
+    solution_graph = utils.create_graph_from_edge_list(selected_edges)
+    try:
+        print("loop found", list(nx.find_cycle(solution_graph, orientation="ignore")))
+    except nx.exception.NetworkXNoCycle as e:
+        print("no loops found.")
 
     return m
 
