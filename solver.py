@@ -1,18 +1,16 @@
-import os
-import sys
 import argparse
-from glob import glob
 import numpy as np
 import gurobipy as gp
 from gurobipy import GRB
 from scipy.stats import norm, vonmises
 import matplotlib.pyplot as plt
 import networkx as nx
+from time import time
 import utils
 
 
-def get_width_consistency_cost(x, mean, std):
-    return norm.cdf(x, mean, std)
+def get_width_consistency_cost(x, mean=0, std=1):
+    return norm.pdf(x, loc=mean, scale=std)
 
 
 def get_edge_direction_similarity(u, v, w):
@@ -59,7 +57,7 @@ def get_pairwise_cost():
     pass
 
 
-def add_constraints(m, graph, vars, root):
+def add_constraints(m, graph, vars, root, multiple_roots=[]):
     # add no-cycle constraint
     # reimplemented from Tueretken 2016 formulas (8-15),
     # https://vcg.seas.harvard.edu/publications/reconstructing-curvilinear-networks-using-path-classifiers-and-integer-programming/paper
@@ -169,28 +167,53 @@ def add_constraints(m, graph, vars, root):
             m.addConstr(auxiliary_vars[cauxvar] >= 0,
                         "c13_%i_%i_%i" % (l, i, j))
 
+    # (14) already done in variable type definition
+    # (15) set edge from virtual root to real root to 1
+    if len(multiple_roots) > 0:
+        for r in multiple_roots:
+            cedgename = "e_%i_%i" % (root, r)
+            m.addConstr(vars[cedgename] == 1, "c15_%i_%i" % (root, r))
+
+    # each edge can only be selected in one direction
+    # x[i, j] + x[j, i] <= 1
+    added = []
+    for i in graph.nodes():
+        if i == 0:
+            continue
+        nnodes = list(graph.successors(i))
+        for nn in nnodes:
+            if nn in added:
+                continue
+            cedgename = "e_%i_%i" % (i, nn)
+            nedgename = "e_%i_%i" % (nn, i)
+            if cedgename in vars and nedgename in vars:
+                m.addConstr(vars[cedgename] + vars[nedgename] <= 1)
+        added.append(i)
+
     return m, auxiliary_vars
 
 
-def create_model(graph, roots=None):
+def create_model(graph, root_indices=[], virtual_root_index=None):
     # define model
     m = gp.Model("OptimalTrees")
-    # heads up: taking start node with highest radius for now
-    endpoints = utils.get_n_degree_nodes(graph, 1)
-    #branching_points = utils.get_ge_n_degree_nodes(graph, 3)
-    root = None
-    cradius = 0
-    for n in endpoints:
-        if graph.nodes[n]["radius"] >= cradius:
-            root = n
-            cradius = graph.nodes[n]["radius"]
-    print("root: ", root, cradius)
+    if virtual_root_index is not None:
+        root = virtual_root_index
+    elif len(root_indices) == 1:
+        root = root_indices[0]
+    elif len(root_indices) > 1 and virtual_root_index is None:
+        raise ValueError('Please specify virtual root if more than one root')
 
-    # check for loops
-    try:
-        print("loop found", list(nx.find_cycle(graph, orientation="ignore")))
-    except nx.exception.NetworkXNoCycle as e:
-        print("no loops found.")
+    else:
+        # if no roots are given, taking start node with the highest radius
+        endpoints = utils.get_n_degree_nodes(graph, 1)
+        #branching_points = utils.get_ge_n_degree_nodes(graph, 3)
+        root = None
+        cradius = 0
+        for p in endpoints:
+            if graph.nodes[p]["radius"] >= cradius:
+                root = p
+                cradius = graph.nodes[p]["radius"]
+    print("root index: ", root)
 
     objective = None
     vars = {}
@@ -202,9 +225,14 @@ def create_model(graph, roots=None):
         vars[cedgename] = m.addVar(vtype=GRB.BINARY, name=cedgename)
         # compute edge cost and add to graph
         # add width difference and cost as edge attribute
-        width_diff = graph.nodes[u]["radius"] - graph.nodes[v]["radius"]
+        if u == root:
+            width_diff = 0
+            width_cost = 0
+        else:
+            width_diff = graph.nodes[u]["radius"] - graph.nodes[v]["radius"]
+            width_cost = get_width_consistency_cost(width_diff, 0, 4)
+
         graph[u][v]["width_diff"] = width_diff
-        width_cost = get_width_consistency_cost(width_diff, 1, 4)
         graph[u][v]["width_cost"] = width_cost
         # add cost for edge raw intensity here?
         # add unary term to objective
@@ -222,16 +250,18 @@ def create_model(graph, roots=None):
         if len(list(successor_nodes)) == 0:
             continue
         cedgename = "e_%i_%i" % (u, v)
-        #cedge = m.getVarByName(cedgename)
         for n in successor_nodes:
             nedgename = "e_%i_%i" % (v, n)
-            #nedge = m.getVarByName(nedgename)
-            edge_dir = get_edge_direction_similarity( # maybe edge_pair_angle?
-                graph.nodes[u]["pos"],
-                graph.nodes[v]["pos"],
-                graph.nodes[n]["pos"]
-            )
-            edge_dir_cost = get_edge_direction_cost(edge_dir)
+            if u == root:
+                edge_dir = 0
+                edge_dir_cost = 0
+            else:
+                edge_dir = get_edge_direction_similarity(
+                    graph.nodes[u]["pos"],
+                    graph.nodes[v]["pos"],
+                    graph.nodes[n]["pos"]
+                )
+                edge_dir_cost = get_edge_direction_cost(edge_dir)
             print(edge_dir, edge_dir_cost)
             # plot_edge_direction_cost()
             # add edge pair cost to objective
@@ -243,7 +273,23 @@ def create_model(graph, roots=None):
     # add objective
     m.setObjective(objective, GRB.MAXIMIZE)
 
+    return m
+
+
+def run_solver(graph, root_indices, virtual_root_index):
+    # check for loops
+    try:
+        print("loop found", list(nx.find_cycle(graph, orientation="ignore")))
+    except nx.exception.NetworkXNoCycle as e:
+        print("no loops found.")
+
+    # create model
+    m = create_model(graph, root_indices, virtual_root_index)
+
+    # solve
     m.optimize()
+
+    # read result
     cnt = 0
     selected_edges = []
     for v in m.getVars():
@@ -255,39 +301,50 @@ def create_model(graph, roots=None):
 
     # create graph and check for loops
     solution_graph = utils.create_graph_from_edge_list(selected_edges)
+    # verify if graph contains loops
     try:
-        print("loop found", list(nx.find_cycle(solution_graph, orientation="ignore")))
+        print("loop found",
+              list(nx.find_cycle(solution_graph, orientation="ignore")))
     except nx.exception.NetworkXNoCycle as e:
         print("no loops found.")
-
-    return m
 
 
 def main():
     # get input parameter
     parser = argparse.ArgumentParser()
-    parser.add_argument("--swc_folder", type=str, default=None,
-                        help="path to input swc folder")
+    parser.add_argument("--input", type=str, default=None,
+                        help="input folder or file in csv or swc file format")
+    parser.add_argument("--roots", type=str,
+                        default="roots.csv",
+                        help="input json file with root coordinates"
+                        )
     args = parser.parse_args()
 
-    # read swc files
+    # read input
     # assume overcomplete graph here
-    if args.swc_folder.endswith(".swc"):
-        swc = utils.read_swc_file(args.swc_folder)
+    if args.input.endswith(".swc"):
+        # todo: clean up here
+        points = utils.read_swc_file(args.input, directed=False)
+    elif args.input.endswith(".csv"):
+        points = utils.read_csv_file(args.input)
     else:
         raise NotImplementedError
 
-    # create nx graph ?
-    graph = utils.create_graph_from_swc(swc)
+    start = time()
+    # read roots
+    roots = utils.read_roots_from_csv(args.roots)
+    # create nx graph
+    graph, root_indices, virtual_root_index = (
+        utils.create_graph_from_point_list(points, roots))
+    print(graph.number_of_nodes(), graph.number_of_edges())
+    graph = utils.create_toy_subgraph(
+        graph, root_indices, virtual_root_index, 10)
+    print(graph.number_of_nodes(), graph.number_of_edges())
+    print("time for creating graph % s sec" % (time() - start))
 
-    # get roots -> heads up: for now just first -1 node
-    # roots =
-    # create model
-    model = create_model(graph)
-
-    # solve
-
-    # read result
+    start = time()
+    run_solver(graph, root_indices, virtual_root_index)
+    print("time for solving optimization problem % s sec" % (time() - start))
 
 
 if __name__ == "__main__":
