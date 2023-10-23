@@ -73,7 +73,8 @@ def create_graph_from_swc(swc):
     return graph
 
 
-def create_graph_from_point_list(points, roots):
+def create_graph_from_point_list(points, roots, min_radius_diff=None,
+                                 max_radius_diff=None):
     # create directed graph
     graph = nx.DiGraph()
     virtual_root_index = 0
@@ -87,11 +88,7 @@ def create_graph_from_point_list(points, roots):
     for point in unique_points:
         graph.add_node(
             index,
-            x=point[0],
-            y=point[1],
-            z=point[2],
-            pos=np.array([point[0], point[1], point[2]]), # not necessary to
-            # save both formats
+            pos=np.array([point[0], point[1], point[2]]),
             radius=point[3],
         )
         pos_to_id["%f_%f_%f_%f" % (
@@ -111,15 +108,20 @@ def create_graph_from_point_list(points, roots):
         elif index_b in root_indices:
             graph.add_edge(index_b, index_a)
         else:
-            graph.add_edge(index_a, index_b)
-            graph.add_edge(index_b, index_a)
+            radius_a = node_a[3]
+            radius_b = node_b[3]
+            if min_radius_diff is not None and max_radius_diff is not None:
+                if min_radius_diff <= radius_a - radius_b <= max_radius_diff:
+                    graph.add_edge(index_a, index_b)
+                if min_radius_diff <= radius_b - radius_a <= max_radius_diff:
+                    graph.add_edge(index_b, index_a)
+            else:
+                graph.add_edge(index_a, index_b)
+                graph.add_edge(index_b, index_a)
 
     # create virtual root and connect to original roots
     graph.add_node(
         virtual_root_index,
-        x=0.0,
-        y=0.0,
-        z=0.0,
         pos=np.array([0.0, 0.0, 0.0]),
         radius=0.0
     )
@@ -149,8 +151,6 @@ def create_toy_subgraph(graph, roots, vroot, size):
                 cnt += len(nn)
                 ncnode += nn
             cnode = ncnode
-            print(cnt, len(cnode), len(nodes))
-    print(len(nodes))
 
     # take path from one root to the other
     graph_without_root = graph.copy()
@@ -163,10 +163,9 @@ def create_toy_subgraph(graph, roots, vroot, size):
                 source=roots[i], target=roots[j])
             nodes += path
             print(i, j, len(path))
-
     nodes = np.unique(nodes)
     toy_graph = graph.subgraph(nodes)
-    return toy_graph
+    return toy_graph, roots, vroot
 
 
 def create_graph_from_edge_list(edges):
