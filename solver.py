@@ -58,7 +58,7 @@ def get_pairwise_cost():
     pass
 
 
-#def conservation_of_flow(nodes, ):
+# def conservation_of_flow(nodes, ):
 
 def add_constraints(m, graph, vars, root, multiple_roots=[], num_workers=1):
     # add no-cycle constraint
@@ -66,7 +66,7 @@ def add_constraints(m, graph, vars, root, multiple_roots=[], num_workers=1):
     # https://vcg.seas.harvard.edu/publications/reconstructing-curvilinear-networks-using-path-classifiers-and-integer-programming/paper
     if type(multiple_roots) == int:
         multiple_roots = [multiple_roots]
-    #pool = multiprocessing.Pool(num_workers)
+    # pool = multiprocessing.Pool(num_workers)
     auxiliary_vars = {}
     # (8) for all nodes j and l without root: sum_j y^l_rj <= 1
     print("add c8")
@@ -75,7 +75,7 @@ def add_constraints(m, graph, vars, root, multiple_roots=[], num_workers=1):
         if n_l == root:
             continue
         tmpexp = None
-        for n_j in graph.nodes():
+        for n_j in graph.successors(root):
             if n_j == root or n_j == n_l:
                 continue
             cauxvar = "y_%i_%i_%i" % (n_l, root, n_j)
@@ -97,17 +97,21 @@ def add_constraints(m, graph, vars, root, multiple_roots=[], num_workers=1):
         if n_l == root:
             continue
         tmpexp = None
-        for n_j in graph.nodes():
+        for n_j in graph.predecessors(n_l):
             if n_j == n_l:
                 continue
             cauxvar = "y_%i_%i_%i" % (n_l, n_j, n_l)
-            auxiliary_vars[cauxvar] = m.addVar(
-                vtype=GRB.CONTINUOUS, name=cauxvar)
+            if cauxvar not in auxiliary_vars:
+                auxiliary_vars[cauxvar] = m.addVar(
+                    vtype=GRB.CONTINUOUS, name=cauxvar)
             if tmpexp is None:
                 tmpexp = gp.LinExpr(auxiliary_vars[cauxvar])
             else:
                 tmpexp.add(auxiliary_vars[cauxvar])
-        m.addConstr(tmpexp <= 1, "c9_%i" % n_l)
+        if tmpexp is not None:
+            m.addConstr(tmpexp <= 1, "c9_%i" % n_l)
+        else:
+            print("c9 is None for ", n_l, list(graph.predecessors(n_l)))
     stop = time()
     print("%s for c9" % (stop - start))
 
@@ -117,38 +121,39 @@ def add_constraints(m, graph, vars, root, multiple_roots=[], num_workers=1):
     for n_l in graph.nodes():
         if n_l == root:
             continue
-        for n_i in graph.nodes():
+        # left sum
+        tmpexpleft = None
+        for n_i, n_j in graph.edges():
             if n_i == root or n_i == n_l:
                 continue
-            # left sum
-            tmpexpleft = None
-            for n_j in graph.nodes():
-                if n_j == root or n_j == n_i:
-                    continue
-                cauxvar = "y_%i_%i_%i" % (n_l, n_i, n_j)
-                if cauxvar not in auxiliary_vars:
-                    auxiliary_vars[cauxvar] = m.addVar(
-                        vtype=GRB.CONTINUOUS, name=cauxvar)
-                if tmpexpleft is None:
-                    tmpexpleft = gp.LinExpr(auxiliary_vars[cauxvar])
-                else:
-                    tmpexpleft.add(auxiliary_vars[cauxvar])
-            # right sum
-            tmpexpright = None
-            for n_j in graph.nodes():
-                if n_j == n_i or n_j == n_l:
-                    continue
-                cauxvar = "y_%i_%i_%i" % (n_l, n_j, n_i)
-                if cauxvar not in auxiliary_vars:
-                    auxiliary_vars[cauxvar] = m.addVar(
-                        vtype=GRB.CONTINUOUS, name=cauxvar)
-                if tmpexpright is None:
-                    tmpexpright = gp.LinExpr(auxiliary_vars[cauxvar])
-                else:
-                    tmpexpright.add(auxiliary_vars[cauxvar])
-            # bring them together
-            m.addConstr(tmpexpleft - tmpexpright == 0,
-            "c10_%i_%i" % (n_l, n_i))
+            if n_j == root or n_j == n_i:
+                continue
+            cauxvar = "y_%i_%i_%i" % (n_l, n_i, n_j)
+            if cauxvar not in auxiliary_vars:
+                auxiliary_vars[cauxvar] = m.addVar(
+                    vtype=GRB.CONTINUOUS, name=cauxvar)
+            if tmpexpleft is None:
+                tmpexpleft = gp.LinExpr(auxiliary_vars[cauxvar])
+            else:
+                tmpexpleft.add(auxiliary_vars[cauxvar])
+        # right sum
+        tmpexpright = None
+        for n_j, n_i in graph.edges():
+            if n_j == n_i or n_j == n_l:
+                continue
+            if n_i == root or n_i == n_l:
+                continue
+            cauxvar = "y_%i_%i_%i" % (n_l, n_j, n_i)
+            if cauxvar not in auxiliary_vars:
+                auxiliary_vars[cauxvar] = m.addVar(
+                    vtype=GRB.CONTINUOUS, name=cauxvar)
+            if tmpexpright is None:
+                tmpexpright = gp.LinExpr(auxiliary_vars[cauxvar])
+            else:
+                tmpexpright.add(auxiliary_vars[cauxvar])
+        # bring them together
+        m.addConstr(tmpexpleft - tmpexpright == 0,
+                    "c10_%i_%i" % (n_l, n_i))
     stop = time()
     print("%s for c10" % (stop - start))
 
@@ -197,7 +202,7 @@ def add_constraints(m, graph, vars, root, multiple_roots=[], num_workers=1):
     if len(multiple_roots) > 0:
         for r in multiple_roots:
             cedgename = "e_%i_%i" % (root, r)
-            #if cedgename not in vars:
+            # if cedgename not in vars:
             #    vars[cedgename] = m.addVar(
             #        vtype=GRB.BINARY, name=cedgename)
             m.addConstr(vars[cedgename] == 1, "c15_%i_%i" % (root, r))
@@ -242,7 +247,7 @@ def create_model(graph, root_indices=[], virtual_root_index=None,
     else:
         # if no roots are given, taking start node with the highest radius
         endpoints = utils.get_n_degree_nodes(graph, 1)
-        #branching_points = utils.get_ge_n_degree_nodes(graph, 3)
+        # branching_points = utils.get_ge_n_degree_nodes(graph, 3)
         root = None
         cradius = 0
         for p in endpoints:
@@ -273,7 +278,7 @@ def create_model(graph, root_indices=[], virtual_root_index=None,
         # add cost for edge raw intensity here?
         # add unary term to objective
         if objective is None:
-            #objective = gp.LinExpr(width_cost * vars[cedgename])
+            # objective = gp.LinExpr(width_cost * vars[cedgename])
             objective = gp.QuadExpr(width_cost * vars[cedgename])
         else:
             objective.add(width_cost * vars[cedgename])
@@ -320,8 +325,8 @@ def run_solver(graph, root_indices, virtual_root_index, num_workers=1):
     except nx.exception.NetworkXNoCycle as e:
         print("no loops found.")
     # check how many connected components
-    print("number connected components: ", nx.connected_components(
-        graph.to_undirected()))
+    print("number connected components: ", len(list(nx.connected_components(
+        graph.to_undirected()))))
 
     # create model
     m = create_model(graph, root_indices, virtual_root_index, num_workers)
@@ -334,7 +339,7 @@ def run_solver(graph, root_indices, virtual_root_index, num_workers=1):
     selected_edges = []
     for v in m.getVars():
         if v.X == 1 and v.VarName.startswith("e_"):
-            #print('%s %g' % (v.VarName, v.X))
+            # print('%s %g' % (v.VarName, v.X))
             selected_edges.append(np.array(v.VarName.split("_")[1:], dtype=int))
             cnt += 1
     print(graph.number_of_edges(), cnt)
@@ -393,7 +398,7 @@ def main():
             points, roots, args.min_radius_diff, args.max_radius_diff))
     # create smaller toy subgraph for developing
     graph, root_indices, virtual_root_index = utils.create_toy_subgraph(
-        graph, root_indices, virtual_root_index, 10)
+        graph, root_indices, virtual_root_index, 1000)
     print(graph.number_of_nodes(), graph.number_of_edges())
     print("time for creating graph % s sec" % (time() - start))
 

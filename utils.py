@@ -136,7 +136,6 @@ def create_graph_from_point_list(points, roots, min_radius_diff=None,
 
 
 def create_toy_subgraph(graph, roots, vroot, size):
-    roots = [roots[0], roots[2]]
     nodes = [vroot] + roots
     print(graph.number_of_nodes(), len(nodes))
     # take subgraph with given size for each root
