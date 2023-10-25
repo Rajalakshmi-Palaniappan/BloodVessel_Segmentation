@@ -5,7 +5,7 @@ from gurobipy import GRB
 from scipy.stats import norm, vonmises
 import matplotlib.pyplot as plt
 import networkx as nx
-import multiprocessing
+#import multiprocessing
 from time import time
 import utils
 
@@ -49,16 +49,6 @@ def plot_edge_direction_cost(mean=0, kappa=4):
     right.legend(bbox_to_anchor=(0.15, 1.06))
     plt.show()
 
-
-def get_unary_cost():
-    pass
-
-
-def get_pairwise_cost():
-    pass
-
-
-# def conservation_of_flow(nodes, ):
 
 def add_constraints(m, graph, vars, root, multiple_roots=[], num_workers=1):
     # add no-cycle constraint
@@ -352,6 +342,7 @@ def run_solver(graph, root_indices, virtual_root_index, num_workers=1):
               list(nx.find_cycle(solution_graph, orientation="ignore")))
     except nx.exception.NetworkXNoCycle as e:
         print("no loops found.")
+    utils.plot_graph(graph, selected_edges)
 
 
 def main():
@@ -364,12 +355,12 @@ def main():
                         help="input json file with root coordinates"
                         )
     parser.add_argument("--min_radius_diff", type=int,
-                        default=-5,
+                        default=None,    #-5,
                         help="minimum radius difference between two points "
                              "such that edge is constructed"
                         )
     parser.add_argument("--max_radius_diff", type=int,
-                        default=10,
+                        default=None, #10
                         help="maximum radius difference between two points "
                              "such that edge is constructed"
                         )
@@ -398,8 +389,9 @@ def main():
             points, roots, args.min_radius_diff, args.max_radius_diff))
     # create smaller toy subgraph for developing
     graph, root_indices, virtual_root_index = utils.create_toy_subgraph(
-        graph, root_indices, virtual_root_index, 1000)
-    print(graph.number_of_nodes(), graph.number_of_edges())
+        graph, root_indices, virtual_root_index, 500)
+    print("number of nodes and edges: ",
+          (graph.number_of_nodes(), graph.number_of_edges()))
     print("time for creating graph % s sec" % (time() - start))
 
     start = time()
