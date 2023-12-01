@@ -2,7 +2,7 @@ import os
 import networkx as nx
 import numpy as np
 import pandas as pd
-
+import plotly.graph_objects as go
 
 def read_swc_file(in_file, directed=True):
     if not directed:
@@ -96,7 +96,15 @@ def create_graph_from_point_list(points, roots, min_radius_diff=None,
         if np.any(np.all(point.round(decimals=2) == roots_rounded, axis=1)):
             root_indices.append(index)
         index += 1
-
+    if len(root_indices) == 0:
+        root = None
+        cradius = 0
+        for p in graph.nodes():
+            if graph.nodes[p]["radius"] >= cradius:
+                root = p
+                cradius = graph.nodes[p]["radius"]
+                print(f"Updated root: {root}, Updated cradius: {cradius}")
+        root_indices.append(root)
     # all edges should be bidirectional, except roots have only outcoming edges
     for node_a, node_b in zip(points[0], points[1]):
         index_a = pos_to_id["%f_%f_%f_%f" % (
@@ -119,21 +127,43 @@ def create_graph_from_point_list(points, roots, min_radius_diff=None,
                 graph.add_edge(index_a, index_b)
                 graph.add_edge(index_b, index_a)
 
+    print(graph.number_of_nodes(), graph.number_of_edges())
+
+    # only take largest connected component
+    # largest_cc = list(
+    #     max(nx.connected_components(graph.to_undirected()), key=len))
+    # graph = graph.subgraph(largest_cc).copy()
+
     # create virtual root and connect to original roots
-    graph.add_node(
-        virtual_root_index,
-        pos=np.array([0.0, 0.0, 0.0]),
-        radius=0.0
-    )
-    for root in root_indices:
-        graph.add_edge(virtual_root_index, root)
+    # and check if roots are still contained in largest connected component
+    if len(root_indices) == 1:
+        virtual_root_index = None
+
+    elif len(root_indices) > 1:
+        graph.add_node(
+            virtual_root_index,
+            pos=np.array([0.0, 0.0, 0.0]),
+            radius=0.0
+        )
+
+        c_root_indices = []
+        for root in root_indices:
+            if graph.has_node(root):
+                graph.add_edge(virtual_root_index, root)
+                c_root_indices.append(root)
+        root_indices = c_root_indices
+
+    else:
+        print("error in root assignment")
+
 
     print("created graph with %i nodes and %i edges" % (
         graph.number_of_nodes(), graph.number_of_edges()))
     print("root indices: ", root_indices)
+    print(len(list(nx.connected_components(
+        graph.to_undirected()))))
 
     return graph, root_indices, virtual_root_index
-
 
 def create_toy_subgraph(graph, roots, vroot, size):
     nodes = [vroot] + roots
@@ -192,3 +222,78 @@ def get_ge_n_degree_nodes(graph, degree):
         if nx.degree(graph, node_id) >= degree:
             nodes.append(node_id)
     return nodes
+
+def plot_graph(graph, selected_edges):
+    graph = graph.to_undirected()
+    print("plot graph: ", graph.number_of_edges(), len(selected_edges))
+    # create lookup for selected edges
+    lookup = []
+    for u, v in selected_edges:
+        lookup.append("%i_%i" % (u, v))
+        lookup.append("%i_%i" % (v, u))
+
+    # extract edge coordinates
+    edge_x = []
+    edge_y = []
+    edge_z = []
+    for edge in graph.to_undirected().edges():
+        node1, node2 = edge
+        if "%i_%i" % (node1, node2) in lookup:
+            continue
+        node1 = graph.nodes[node1]["pos"]
+        node2 = graph.nodes[node2]["pos"]
+        edge_x.extend([node1[0], node2[0], None])
+        edge_y.extend([node1[1], node2[1], None])
+        edge_z.extend([node1[2], node2[2], None])
+
+    # Create trace for edges
+    edge_trace = go.Scatter3d(
+        x=edge_x,
+        y=edge_y,
+        z=edge_z,
+        mode='lines',
+        line=dict(
+            color='white', width=2),
+        hoverinfo='none'
+    )
+
+    # Extract additional_edge coordinates
+    selected_edge_x = []
+    selected_edge_y = []
+    selected_edge_z = []
+    for selected_edge in selected_edges:
+        node1, node2 = selected_edge
+        node1 = graph.nodes[node1]["pos"]
+        node2 = graph.nodes[node2]["pos"]
+        selected_edge_x.extend([node1[0], node2[0], None])
+        selected_edge_y.extend([node1[1], node2[1], None])
+        selected_edge_z.extend([node1[2], node2[2], None])
+
+    # Create trace for edges
+    selected_edge_trace = go.Scatter3d(
+        x=selected_edge_x,
+        y=selected_edge_y,
+        z=selected_edge_z,
+        mode='lines',
+        line=dict(color='red', width=2),
+        hoverinfo='none'
+    )
+
+    # Create figure
+    fig = go.Figure(data=[selected_edge_trace, edge_trace]) # node_trace
+    fig.update_layout(
+        title='Graph Plot',
+        scene=dict(
+            xaxis_title='X',
+            yaxis_title='Y',
+            zaxis_title='Z',
+            xaxis=dict(showgrid=False),
+            yaxis=dict(showgrid=False),
+            zaxis=dict(showgrid=False),
+            bgcolor='black'
+        )
+    )
+    fig.update_layout(template='plotly_dark',
+                      plot_bgcolor='rgba(0, 0, 0, 0)',
+                      paper_bgcolor='rgba(0, 0, 0, 0)', )
+    fig.show()

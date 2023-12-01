@@ -5,9 +5,11 @@ from gurobipy import GRB
 from scipy.stats import norm, vonmises
 import matplotlib.pyplot as plt
 import networkx as nx
-import multiprocessing
 from time import time
 import utils
+import pandas as pd
+import multiprocessing
+from multiprocessing import pool
 
 
 def get_width_consistency_cost(x, mean=0, std=1):
@@ -50,12 +52,12 @@ def plot_edge_direction_cost(mean=0, kappa=4):
     plt.show()
 
 
-def get_unary_cost():
-    pass
-
-
-def get_pairwise_cost():
-    pass
+# def get_unary_cost():
+#     pass
+#
+#
+# def get_pairwise_cost():
+#     pass
 
 
 # def conservation_of_flow(nodes, ):
@@ -64,11 +66,81 @@ def add_constraints(m, graph, vars, root, multiple_roots=[], num_workers=1):
     # add no-cycle constraint
     # reimplemented from Tueretken 2016 formulas (8-15),
     # https://vcg.seas.harvard.edu/publications/reconstructing-curvilinear-networks-using-path-classifiers-and-integer-programming/paper
+
     if type(multiple_roots) == int:
         multiple_roots = [multiple_roots]
     # pool = multiprocessing.Pool(num_workers)
-    auxiliary_vars = {}
-    # (8) for all nodes j and l without root: sum_j y^l_rj <= 1
+    num_nodes = graph.number_of_nodes()
+    num_edges = graph.number_of_edges()
+    num_vars = num_nodes * num_edges
+    #auxiliary_vars = np.empty(num_vars, dtype=object)
+    nodes_array = np.array(list(graph.nodes))
+    #print(nodes_array)
+    edges_i = []
+    edges_j = []
+    for i, j in graph.edges():
+        edges_i.append(i)
+        edges_j.append(j)
+    edges_i_array = np.array(edges_i)
+    edges_j_array = np.array(edges_j)
+    #print(edges_i_array)
+    #auxiliary_vars = np.array([f"y_{i}_{j[0]}_{j[1]}" for i in nodes_array for j in zip(edges_i_array, edges_j_array)],
+    #                          dtype='U30')
+
+    #variable_names = [f"y_{i}_{j[0]}_{j[1]}" for i in nodes_array for j in zip(edges_i_array, edges_j_array)]
+    #print("variable names generated")
+    m.addMVar(num_vars, vtype=GRB.CONTINUOUS, name=[f"y_{i}_{j[0]}_{j[1]}" for i in nodes_array for j in zip(edges_i_array, edges_j_array)])
+
+    print("auxiliary variables array is created")
+
+    #m.addMVar(513200693, vtype=GRB.CONTINUOUS, name=[i for i in auxiliary_vars])
+    #auxiliary_vars = np.unique(auxiliary_vars)
+    #np.set_printoptions(threshold=np.inf)
+    #print(auxiliary_vars)
+    # element_to_check = 'y_6146_0_192'
+    # if element_to_check in auxiliary_vars:
+    #     print(f"{element_to_check} is in the array")
+    # else:
+    #     print(f"{element_to_check} is not in the array")
+
+    # auxiliary_vars = auxiliary_vars.reshape(num_nodes, num_edges)
+    # print(auxiliary_vars.shape)
+
+    # for i in range(auxiliary_vars.shape[0]):
+    #     for j in range(auxiliary_vars.shape[1]):
+    #         var_name = f'{auxiliary_vars[i, j]}'
+    #         m.addVar(vtype=GRB.CONTINUOUS, name=var_name)
+    #added_var_names = []
+    # for i in auxiliary_vars:
+    #     #var_name = i
+    #     try:
+    #        m.addVar(vtype=GRB.BINARY, name=i)
+    #        #added_var_names.append(var_name)
+    #        #print(f"Added variable '{var_name}': Name={new_var.VarName}, Type={new_var.VType}")
+    #     except gp.GurobiError as e:
+    #         print(f"Error adding variable '{i}': {e}")
+    # print(len(added_var_names))
+    # print(added_var_names[5])
+    print("variables added to the model")
+    m.update()
+    #del variable_names
+    #print("variable array deleted")
+    # cauxvar_index = np.where(auxiliary_vars == 'y_6146_0_192')[0]
+    # print(cauxvar_index)
+    # print(auxiliary_vars[cauxvar_index][0])
+
+    # var_names = [var.VarName for var in m.getVars()]
+    # print(len(var_names))
+    #var = m.getVarByName('y_192_13934_13878')
+    # Loop through variables and find the matching one
+    # for var in m.getVars():
+    #     if var.VarName == 'y_192_13934_13878':
+    #         print("Found variable:", var)
+    #         break
+
+            #print(var_name)
+
+    # # (8) for all nodes j and l without root: sum_j y^l_rj <= 1
     print("add c8")
     start = time()
     for n_l in graph.nodes():
@@ -78,19 +150,27 @@ def add_constraints(m, graph, vars, root, multiple_roots=[], num_workers=1):
         for n_j in graph.successors(root):
             if n_j == root or n_j == n_l:
                 continue
-            cauxvar = "y_%i_%i_%i" % (n_l, root, n_j)
-            auxiliary_vars[cauxvar] = m.addVar(
-                vtype=GRB.CONTINUOUS, name=cauxvar)
+            cauxvar = 'y_%i_%i_%i' % (n_l, root, n_j)
+            #cauxvar_index = 0
+            # if auxiliary_vars[cauxvar_index] not in auxiliary_vars:
+            #     auxiliary_vars[cauxvar_index] = m.addVar(
+            #         vtype=GRB.CONTINUOUS, name=cauxvar)
+            #print(cauxvar)
+            #cauxvar_index = np.where(auxiliary_vars == cauxvar)[0]
+            #var = m.getVarByName(cauxvar)
+            # auxiliary_vars[cauxvar] = m.addVar(
+            #     vtype=GRB.CONTINUOUS, name=cauxvar)
             if tmpexp is None:
-                tmpexp = gp.LinExpr(auxiliary_vars[cauxvar])
+                tmpexp = gp.LinExpr(m.getVarByName(cauxvar))
             else:
-                tmpexp.add(auxiliary_vars[cauxvar])
+                tmpexp.add(m.getVarByName(cauxvar))
         m.addConstr(tmpexp <= 1, "c8_%i" % n_l)
     stop = time()
     print("%s for c8" % (stop - start))
 
+
     # (9) for all nodes l without root and all nodes j without l:
-    # sum_j y^l_jl <= 1
+    #sum_j y^l_jl <= 1
     print("add c9")
     start = time()
     for n_l in graph.nodes():
@@ -101,13 +181,13 @@ def add_constraints(m, graph, vars, root, multiple_roots=[], num_workers=1):
             if n_j == n_l:
                 continue
             cauxvar = "y_%i_%i_%i" % (n_l, n_j, n_l)
-            if cauxvar not in auxiliary_vars:
-                auxiliary_vars[cauxvar] = m.addVar(
-                    vtype=GRB.CONTINUOUS, name=cauxvar)
+            # if cauxvar not in auxiliary_vars:
+            #     auxiliary_vars[cauxvar] = m.addVar(
+            #         vtype=GRB.CONTINUOUS, name=cauxvar)
             if tmpexp is None:
-                tmpexp = gp.LinExpr(auxiliary_vars[cauxvar])
+                tmpexp = gp.LinExpr(m.getVarByName(cauxvar))
             else:
-                tmpexp.add(auxiliary_vars[cauxvar])
+                tmpexp.add(m.getVarByName(cauxvar))
         if tmpexp is not None:
             m.addConstr(tmpexp <= 1, "c9_%i" % n_l)
         else:
@@ -115,49 +195,50 @@ def add_constraints(m, graph, vars, root, multiple_roots=[], num_workers=1):
     stop = time()
     print("%s for c9" % (stop - start))
 
-    # (10) for all l
     print("add c10")
     start = time()
     for n_l in graph.nodes():
         if n_l == root:
             continue
-        # left sum
-        tmpexpleft = None
-        for n_i, n_j in graph.edges():
+        for n_i in graph.nodes():
             if n_i == root or n_i == n_l:
                 continue
-            if n_j == root or n_j == n_i:
-                continue
-            cauxvar = "y_%i_%i_%i" % (n_l, n_i, n_j)
-            if cauxvar not in auxiliary_vars:
-                auxiliary_vars[cauxvar] = m.addVar(
-                    vtype=GRB.CONTINUOUS, name=cauxvar)
-            if tmpexpleft is None:
-                tmpexpleft = gp.LinExpr(auxiliary_vars[cauxvar])
+            tmpexpleft = None
+            tmpexpright = None
+
+            for n_j in graph.successors(n_i):
+                if n_j == n_i or n_j == root:
+                    continue
+                cauxvar = "y_%i_%i_%i" % (n_l, n_i, n_j)
+                # if cauxvar not in auxiliary_vars:
+                #     auxiliary_vars[cauxvar] = m.addVar(
+                #         vtype=GRB.CONTINUOUS, name=cauxvar)
+                if tmpexpleft is None:
+                    tmpexpleft = gp.LinExpr(m.getVarByName(cauxvar))
+                else:
+                    tmpexpleft.add(m.getVarByName(cauxvar))
+
+            for n_j in graph.predecessors(n_i):
+                if n_j == n_i or n_j == n_l:
+                    continue
+                cauxvar = "y_%i_%i_%i" % (n_l, n_j, n_i)
+                # if cauxvar not in auxiliary_vars:
+                #     auxiliary_vars[cauxvar] = m.addVar(
+                #         vtype=GRB.CONTINUOUS, name=cauxvar)
+                if tmpexpright is None:
+                    tmpexpright = gp.LinExpr(m.getVarByName(cauxvar))
+                else:
+                    tmpexpright.add(m.getVarByName(cauxvar))
+
+            if tmpexpleft is not None and tmpexpright is not None:
+                m.addConstr(tmpexpleft - tmpexpright == 0, "c10_%i_%i" % (n_l, n_i))
             else:
-                tmpexpleft.add(auxiliary_vars[cauxvar])
-        # right sum
-        tmpexpright = None
-        for n_j, n_i in graph.edges():
-            if n_j == n_i or n_j == n_l:
-                continue
-            if n_i == root or n_i == n_l:
-                continue
-            cauxvar = "y_%i_%i_%i" % (n_l, n_j, n_i)
-            if cauxvar not in auxiliary_vars:
-                auxiliary_vars[cauxvar] = m.addVar(
-                    vtype=GRB.CONTINUOUS, name=cauxvar)
-            if tmpexpright is None:
-                tmpexpright = gp.LinExpr(auxiliary_vars[cauxvar])
-            else:
-                tmpexpright.add(auxiliary_vars[cauxvar])
-        # bring them together
-        m.addConstr(tmpexpleft - tmpexpright == 0,
-                    "c10_%i_%i" % (n_l, n_i))
+                print("c10 is None for ", n_l)
     stop = time()
     print("%s for c10" % (stop - start))
 
-    # (11) for all edges and all nodes except r,i,j: y^l_ij <= t_ij
+
+    #(11) for all edges and all nodes except r,i,j: y^l_ij <= t_ij
     print("add c11")
     start = time()
     for i, j in graph.edges():
@@ -165,24 +246,35 @@ def add_constraints(m, graph, vars, root, multiple_roots=[], num_workers=1):
             if n_l == root or n_l == i or n_l == j:
                 continue
             cauxvar = "y_%i_%i_%i" % (n_l, i, j)
+            # if cauxvar not in auxiliary_vars:
+            #     auxiliary_vars[cauxvar] = m.addVar(
+            #         vtype=GRB.CONTINUOUS, name=cauxvar)
             cedgename = "e_%i_%i" % (i, j)
-            m.addConstr(auxiliary_vars[cauxvar] <= vars[cedgename],
-                        "c11_%i_%i_%i" % (i, j, n_l))
+            m.addConstr(m.getVarByName(cauxvar) <= vars[cedgename],
+                        "c11_%i_%i_%i" % (n_l, i, j))
     stop = time()
     print("%s for c11" % (stop - start))
+
+    #(11)
+    # print("add c11")
+    # start = time()
+
 
     # (12) for all edges: y^l_il == t_il
     print("add c12")
     start = time()
     for i, l in graph.edges():
         cauxvar = "y_%i_%i_%i" % (l, i, l)
+        # if cauxvar not in auxiliary_vars:
+        #     auxiliary_vars[cauxvar] = m.addVar(
+        #         vtype=GRB.CONTINUOUS, name=cauxvar)
         cedgename = "e_%i_%i" % (i, l)
-        m.addConstr(auxiliary_vars[cauxvar] == vars[cedgename],
+        m.addConstr(m.getVarByName(cauxvar) == vars[cedgename],
                     "c12_%i_%i" % (i, l))
     stop = time()
     print("%s for c12" % (stop - start))
 
-    # (13) for all edges e_ij and all nodes except root and i: y^l_ij >= 0
+
     print("add c13")
     start = time()
     for i, j in graph.edges():
@@ -190,10 +282,11 @@ def add_constraints(m, graph, vars, root, multiple_roots=[], num_workers=1):
             if n_l == root or n_l == i:
                 continue
             cauxvar = "y_%i_%i_%i" % (n_l, i, j)
-            m.addConstr(auxiliary_vars[cauxvar] >= 0,
-                        "c13_%i_%i_%i" % (l, i, j))
+            m.addConstr(m.getVarByName(cauxvar) >= 0,
+                        "c13_%i_%i_%i" % (n_l, i, j))
     stop = time()
     print("%s for c13" % (stop - start))
+
 
     # (14) already done in variable type definition
     # (15) set edge from virtual root to real root to 1
@@ -202,9 +295,9 @@ def add_constraints(m, graph, vars, root, multiple_roots=[], num_workers=1):
     if len(multiple_roots) > 0:
         for r in multiple_roots:
             cedgename = "e_%i_%i" % (root, r)
-            # if cedgename not in vars:
-            #    vars[cedgename] = m.addVar(
-            #        vtype=GRB.BINARY, name=cedgename)
+            if cedgename not in vars:
+               vars[cedgename] = m.addVar(
+                   vtype=GRB.BINARY, name=cedgename)
             m.addConstr(vars[cedgename] == 1, "c15_%i_%i" % (root, r))
     stop = time()
     print("%s for c15" % (stop - start))
@@ -230,12 +323,13 @@ def add_constraints(m, graph, vars, root, multiple_roots=[], num_workers=1):
     stop = time()
     print("%s for c16" % (stop - start))
 
-    return m, auxiliary_vars
+    return m
 
 
 def create_model(graph, root_indices=[], virtual_root_index=None,
                  num_workers=1):
     # define model
+
     m = gp.Model("OptimalTrees")
     if virtual_root_index is not None:
         root = virtual_root_index
@@ -243,14 +337,13 @@ def create_model(graph, root_indices=[], virtual_root_index=None,
         root = root_indices[0]
     elif len(root_indices) > 1 and virtual_root_index is None:
         raise ValueError('Please specify virtual root if more than one root')
-
     else:
         # if no roots are given, taking start node with the highest radius
-        endpoints = utils.get_n_degree_nodes(graph, 1)
+        #endpoints = utils.get_n_degree_nodes(graph, 1)
         # branching_points = utils.get_ge_n_degree_nodes(graph, 3)
         root = None
         cradius = 0
-        for p in endpoints:
+        for p in graph.nodes():
             if graph.nodes[p]["radius"] >= cradius:
                 root = p
                 cradius = graph.nodes[p]["radius"]
@@ -307,9 +400,12 @@ def create_model(graph, root_indices=[], virtual_root_index=None,
             # plot_edge_direction_cost()
             # add edge pair cost to objective
             objective.add(edge_dir_cost * vars[cedgename] * vars[nedgename])
+    m.Params.NodeFileStart = 0.05
+    #m.setParam('Method', 2)
+    m.setParam('BarHomogeneous', 1)
 
     # add constraints
-    m, aux_vars = add_constraints(
+    m = add_constraints(
         m, graph, vars, root, multiple_roots=root_indices,
         num_workers=num_workers)
     # add objective
@@ -346,12 +442,36 @@ def run_solver(graph, root_indices, virtual_root_index, num_workers=1):
 
     # create graph and check for loops
     solution_graph = utils.create_graph_from_edge_list(selected_edges)
+
+    # node_to_remove = virtual_root_index
+    # solution_graph = solution_graph.remove_node(node_to_remove)
     # verify if graph contains loops
     try:
         print("loop found",
               list(nx.find_cycle(solution_graph, orientation="ignore")))
     except nx.exception.NetworkXNoCycle as e:
         print("no loops found.")
+
+    node_to_remove = virtual_root_index
+    solution_graph.remove_node(node_to_remove)
+
+    output_edges = []
+    for edge in solution_graph.edges():
+        node1, node2 = edge
+        node1 = graph.nodes[node1]["pos"]
+        node2 = graph.nodes[node2]["pos"]
+        edge = ((node1[0], node1[1], node1[2]), (node2[0], node2[1], node2[2]))
+        output_edges.append(edge)
+    df = pd.DataFrame(output_edges, columns=['node1', 'node2'])
+    #df.to_csv('/mnt/md0/rajalakshmi/MST_ILP/ILP/skeleton_1_toygraph_LP_output.csv', index=False)
+
+
+    print("number of connected components: ", len(list(nx.connected_components(
+        solution_graph.to_undirected()))))
+
+    print(len(selected_edges))
+
+    utils.plot_graph(graph, selected_edges)
 
 
 def main():
@@ -364,12 +484,12 @@ def main():
                         help="input json file with root coordinates"
                         )
     parser.add_argument("--min_radius_diff", type=int,
-                        default=-5,
+                        default=None,
                         help="minimum radius difference between two points "
                              "such that edge is constructed"
                         )
     parser.add_argument("--max_radius_diff", type=int,
-                        default=10,
+                        default=None,
                         help="maximum radius difference between two points "
                              "such that edge is constructed"
                         )
@@ -398,7 +518,7 @@ def main():
             points, roots, args.min_radius_diff, args.max_radius_diff))
     # create smaller toy subgraph for developing
     graph, root_indices, virtual_root_index = utils.create_toy_subgraph(
-        graph, root_indices, virtual_root_index, 1000)
+        graph, root_indices, virtual_root_index, 500)
     print(graph.number_of_nodes(), graph.number_of_edges())
     print("time for creating graph % s sec" % (time() - start))
 
