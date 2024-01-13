@@ -3,6 +3,8 @@ import networkx as nx
 import numpy as np
 import pandas as pd
 import plotly.graph_objects as go
+import csv
+import ast
 
 def read_swc_file(in_file, directed=True):
     if not directed:
@@ -50,6 +52,23 @@ def read_csv_file(in_file):
     data = np.stack([nodes_a, nodes_b])
     print(data.shape)
     return data
+def read_csv_to_list(csv_file_path):
+    data_list = []
+    with open(csv_file_path, 'r') as csv_file:
+        csv_reader = csv.reader(csv_file)
+        next(csv_reader)  # Skip naming row
+
+        for row in csv_reader:
+            data_row = []
+            for item in row:
+                try:
+                    value = ast.literal_eval(item)
+                except (ValueError, SyntaxError):
+                    value = item.strip("'")  # Remove single quotes (in certain cases)
+                data_row.append(value)
+            data_list.append(tuple(data_row))
+
+    return data_list
 
 
 def create_graph_from_swc(swc):
@@ -79,9 +98,11 @@ def create_graph_from_point_list(points, roots, min_radius_diff=None,
     graph = nx.DiGraph()
     virtual_root_index = 0
     pos_to_id = {}
-    # create nodes
+
     unique_points = np.unique(np.concatenate(
         [points[0], points[1]], axis=0), axis=0)
+    print(unique_points.shape)
+
     index = 1
     root_indices = []
     roots_rounded = roots.round(decimals=2)
@@ -163,7 +184,7 @@ def create_graph_from_point_list(points, roots, min_radius_diff=None,
     print(len(list(nx.connected_components(
         graph.to_undirected()))))
 
-    return graph, root_indices, virtual_root_index
+    return unique_points, graph, root_indices, virtual_root_index
 
 def create_toy_subgraph(graph, roots, vroot, size):
     nodes = [vroot] + roots
